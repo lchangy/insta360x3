@@ -1,0 +1,24 @@
+[project]
+name = "instax3-da360-runtime"
+version = "0.1.0"
+description = "Locked Python runtime for the Insta360 X3 ROS 2 DA360 pipeline"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "numpy==1.26.4",
+    "opencv-python==4.11.0.86",
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
