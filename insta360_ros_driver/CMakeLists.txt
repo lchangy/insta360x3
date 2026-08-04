@@ -107,6 +107,8 @@ install(PROGRAMS
   scripts/ros_cubemap_view.py
   scripts/yolo26s_depth_pointcloud.py
   scripts/unidepthv2_pointcloud.py
+  scripts/generate_da360_gazebo_world.py
+  scripts/gazebo_equirectangular.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
