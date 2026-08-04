@@ -1,13 +1,16 @@
 [project]
 name = "instax3-da360-runtime"
 version = "0.1.0"
-description = "Locked Python runtime for the Insta360 X3 ROS 2 DA360 pipeline"
+description = "Locked Python runtime for the Insta360 X3 ROS 2 DA360 and YOLO26 depth pipeline"
 requires-python = ">=3.10,<3.11"
 dependencies = [
     "numpy==1.26.4",
     "opencv-python==4.11.0.86",
     "torch==2.11.0",
     "torchvision==0.26.0",
+    # YOLO26 depth support is currently in the upstream source tree; the
+    # latest PyPI release in this environment does not contain DepthModel.
+    "ultralytics @ git+https://github.com/ultralytics/ultralytics.git@54c1a6da237d1c9c8da3e7b29702ecabe2cba5dc",
 ]
 
 [tool.uv]
@@ -21,4 +24,3 @@ torchvision = { index = "pytorch-cu128" }
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
-

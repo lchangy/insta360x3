@@ -6,6 +6,7 @@ log/
 # Local Python environments and caches
 .venv
 venv/
+.cache/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -27,6 +28,9 @@ vendor/
 
 # Download DA360 model weights separately; see README.md.
 insta360_ros_driver/da360_runtime/checkpoints/*.pth
+
+# Ultralytics resolves the official YOLO26 depth checkpoint in the launch cwd.
+yolo26s-depth.pt
 
 # Insta360 CameraSDK is obtained separately from Insta360. Do not publish it
 # unless your SDK agreement explicitly permits redistribution.

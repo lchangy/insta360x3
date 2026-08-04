@@ -72,7 +72,7 @@ Insta360 X3。相机需要插入 microSD 卡、切换到双镜头模式，并把
    `uv sync --frozen`。验证 GPU：
 
    ```bash
-   .venv/bin/python -c "import rclpy, cv2, torch; print(torch.__version__, torch.cuda.is_available())"
+   .venv/bin/python -c "import rclpy, cv2, torch, ultralytics; from ultralytics.nn.tasks import DepthModel; print(torch.__version__, torch.cuda.is_available(), ultralytics.__version__)"
    ```
 
 5. 编译 ROS 包并配置一次 USB 权限：
@@ -96,7 +96,9 @@ Insta360 X3。相机需要插入 microSD 卡、切换到双镜头模式，并把
 
 | 模式 | 命令 | 说明 |
 | --- | --- | --- |
-| 完整模式 | `./start_pointcloud_pipeline.sh` | 相机、全景、Cubemap、DA360 点云、IMU、RViz 全部启动 |
+| 完整模式 | `./start_pointcloud_pipeline.sh` | 相机、全景、Cubemap、DA360 点云、IMU、RViz 启动；YOLO 默认关闭 |
+| 启用 YOLO | `./start_pointcloud_pipeline.sh --yolo-depth` | 在原流程中增加左/右 Cubemap YOLO26s-depth |
+| 独立 UniDepth | `./start_unidepthv2_pointcloud.sh` | 只启动 UniDepthV2-Small 四面点云和独立 RViz，要求 Cubemap 已运行 |
 | 校准模式 | `./start_pointcloud_pipeline.sh --calibrate` | 打开校准滑块；Cubemap、点云和 RViz 仍同时运行 |
 | 无 RViz | `./start_pointcloud_pipeline.sh --no-rviz` | 只发布数据，不打开 RViz |
 | Cubemap 后台 | `./start_pointcloud_pipeline.sh --cubemap-no-gui` | 发布 Cubemap 话题但不打开四视角窗口 |
@@ -110,7 +112,10 @@ Insta360 X3。相机需要插入 microSD 卡、切换到双镜头模式，并把
 ./start_pointcloud_pipeline.sh --cubemap-face-size 512
 
 # 点云采样步长，默认 4；越小越密、负载越高
-./start_pointcloud_pipeline.sh --point-stride 2
+./start_pointcloud_pipeline.sh --da360-point-stride 2
+
+# 启用 YOLO26s-depth（默认关闭）
+./start_pointcloud_pipeline.sh --yolo-depth
 
 # 使用其他 DA360 权重
 ./start_pointcloud_pipeline.sh --model-path /path/to/model.pth

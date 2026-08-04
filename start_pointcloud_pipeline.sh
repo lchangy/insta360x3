@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# One-repository launcher: Insta360 X3 -> panorama -> DA360 depth/point cloud.
+# One-repository launcher: Insta360 X3 -> cubemap -> DA360 and YOLO depth clouds.
 
 set -Eeo pipefail
 
@@ -13,11 +13,16 @@ LOCAL_DA360_PYTHON="${WORKSPACE_DIR}/.venv/bin/python"
 SYSTEM_PYTHON="/usr/bin/python3"
 
 MODEL_PATH=""
+YOLO_MODEL_PATH="yolo26s-depth.pt"
 POINT_STRIDE=4
+YOLO_POINT_STRIDE=2
+YOLO_IMGSZ=768
+YOLO_DEPTH_MODE=range
 OPEN_RVIZ=true
 ENABLE_CUBEMAP=true
 CUBEMAP_GUI=true
 CUBEMAP_FACE_SIZE=360
+ENABLE_YOLO_DEPTH=false
 CALIBRATION=false
 LAUNCH_PID=""
 CLEANING_UP=0
@@ -26,17 +31,25 @@ usage() {
   cat <<'EOF'
 Usage: ./start_pointcloud_pipeline.sh [options]
 
-Starts the complete Insta360 X3 -> panorama -> DA360 point-cloud pipeline.
+Starts the complete Insta360 X3 -> panorama -> Cubemap -> DA360/YOLO point-cloud pipeline.
 The DA360 runtime is bundled; download DA360_small.pth as described in README.md.
+The official YOLO26 depth model is named yolo26s-depth.pt and is resolved by Ultralytics.
 
 Options:
   --no-rviz              Do not start RViz.
   --no-cubemap           Do not publish cubemap views.
   --cubemap-no-gui       Publish cubemap topics without opening its window.
   --cubemap-face-size N  Cubemap face width/height (default: 360).
+  --yolo-depth           Enable YOLO26s-depth on left/right cubemap faces.
+  --no-yolo-depth        Disable YOLO26s-depth.
+  --yolo-model-path PATH YOLO26s-depth checkpoint or Ultralytics model name.
+  --yolo-point-stride N  YOLO point-cloud sampling stride (default: 2).
+  --yolo-imgsz N       YOLO inference size (default: 768).
+  --yolo-depth-mode M  YOLO depth interpretation: range or optical_z.
   --calibrate            Replace the C++ panorama node with the live calibration UI.
   --model-path PATH      Override the bundled DA360_small.pth checkpoint.
-  --point-stride N       Point-cloud sampling stride (default: 4).
+  --point-stride N       DA360 point-cloud sampling stride (default: 4).
+  --da360-point-stride N Alias for --point-stride.
   -h, --help             Show this help.
 
 Environment:
@@ -59,6 +72,7 @@ while [[ $# -gt 0 ]]; do
     --no-cubemap)
       ENABLE_CUBEMAP=false
       CUBEMAP_GUI=false
+      ENABLE_YOLO_DEPTH=false
       shift
       ;;
     --cubemap-no-gui)
@@ -70,6 +84,34 @@ while [[ $# -gt 0 ]]; do
       CUBEMAP_FACE_SIZE="$2"
       shift 2
       ;;
+    --yolo-depth)
+      ENABLE_YOLO_DEPTH=true
+      shift
+      ;;
+    --no-yolo-depth)
+      ENABLE_YOLO_DEPTH=false
+      shift
+      ;;
+    --yolo-model-path)
+      [[ $# -ge 2 ]] || die "--yolo-model-path requires a path or model name"
+      YOLO_MODEL_PATH="$2"
+      shift 2
+      ;;
+    --yolo-point-stride)
+      [[ $# -ge 2 ]] || die "--yolo-point-stride requires a positive integer"
+      YOLO_POINT_STRIDE="$2"
+      shift 2
+      ;;
+    --yolo-imgsz)
+      [[ $# -ge 2 ]] || die "--yolo-imgsz requires a positive integer"
+      YOLO_IMGSZ="$2"
+      shift 2
+      ;;
+    --yolo-depth-mode)
+      [[ $# -ge 2 ]] || die "--yolo-depth-mode requires range or optical_z"
+      YOLO_DEPTH_MODE="$2"
+      shift 2
+      ;;
     --calibrate)
       CALIBRATION=true
       shift
@@ -79,8 +121,8 @@ while [[ $# -gt 0 ]]; do
       MODEL_PATH="$2"
       shift 2
       ;;
-    --point-stride)
-      [[ $# -ge 2 ]] || die "--point-stride requires a positive integer"
+    --point-stride|--da360-point-stride)
+      [[ $# -ge 2 ]] || die "$1 requires a positive integer"
       POINT_STRIDE="$2"
       shift 2
       ;;
@@ -96,6 +138,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$POINT_STRIDE" =~ ^[1-9][0-9]*$ ]] || die "point stride must be a positive integer"
+[[ "$YOLO_POINT_STRIDE" =~ ^[1-9][0-9]*$ ]] || die "YOLO point stride must be a positive integer"
+[[ "$YOLO_IMGSZ" =~ ^[1-9][0-9]*$ ]] || die "YOLO imgsz must be a positive integer"
+[[ "$YOLO_DEPTH_MODE" == "range" || "$YOLO_DEPTH_MODE" == "optical_z" ]] \
+  || die "YOLO depth mode must be range or optical_z"
 [[ "$CUBEMAP_FACE_SIZE" =~ ^[1-9][0-9]*$ ]] || die "cubemap face size must be a positive integer"
 [[ -r "$ROS_SETUP" ]] || die "ROS 2 Humble setup not found: $ROS_SETUP"
 [[ -r "$INSTALL_SETUP" ]] || die "workspace is not built; missing $INSTALL_SETUP"
@@ -138,6 +184,10 @@ fi
   "DA360 Python not found; create ${LOCAL_DA360_PYTHON} or set DA360_PYTHON"
 "$WORKER_PYTHON" -c 'import cv2, numpy, rclpy, torch, torchvision' >/dev/null 2>&1 \
   || die "DA360 Python is missing cv2, numpy, rclpy, torch, or torchvision: $WORKER_PYTHON; see DEPLOYMENT.md"
+if [[ "$ENABLE_YOLO_DEPTH" == true ]]; then
+  "$WORKER_PYTHON" -c 'import ultralytics; from ultralytics.nn.tasks import DepthModel' >/dev/null 2>&1 \
+    || die "YOLO depth Python lacks upstream YOLO26 depth support; run uv sync --frozen or set DA360_PYTHON: $WORKER_PYTHON"
+fi
 
 ensure_udev_access() {
   local usb_node=""
@@ -173,6 +223,7 @@ collect_pipeline_pids() {
     "${PACKAGE_PREFIX}/share/insta360_ros_driver/da360_runtime/ros2_da360/ros2_da360/da360_realtime_node.py"
     "${PACKAGE_PREFIX}/share/insta360_ros_driver/da360_runtime/ros2_da360/ros2_da360/da360_inference_worker.py"
     "${PACKAGE_PREFIX}/lib/insta360_ros_driver/ros_cubemap_view.py"
+    "${PACKAGE_PREFIX}/lib/insta360_ros_driver/yolo26s_depth_pointcloud.py"
     "tools/ros_cubemap_view.py"
     "rviz2 -d .*da360_realtime.rviz"
   )
@@ -250,8 +301,11 @@ stop_pipeline_processes
 
 echo "[pointcloud-pipeline] repository: $WORKSPACE_DIR"
 echo "[pointcloud-pipeline] bundled runtime: $RUNTIME_ROOT"
-echo "[pointcloud-pipeline] model: $MODEL_PATH"
-echo "[pointcloud-pipeline] launching camera, panorama, calibration=$CALIBRATION, cubemap=$ENABLE_CUBEMAP, DA360, point cloud, rviz=$OPEN_RVIZ"
+echo "[pointcloud-pipeline] DA360 model: $MODEL_PATH"
+echo "[pointcloud-pipeline] DA360 point_stride=$POINT_STRIDE"
+echo "[pointcloud-pipeline] YOLO26s-depth model: $YOLO_MODEL_PATH"
+echo "[pointcloud-pipeline] YOLO26s-depth imgsz=$YOLO_IMGSZ depth_mode=$YOLO_DEPTH_MODE"
+echo "[pointcloud-pipeline] launching camera, panorama, calibration=$CALIBRATION, cubemap=$ENABLE_CUBEMAP, DA360, YOLO26s-depth=$ENABLE_YOLO_DEPTH, RViz=$OPEN_RVIZ"
 
 ros2 launch insta360_ros_driver pointcloud_pipeline.launch.py \
   worker_python:="$WORKER_PYTHON" \
@@ -260,6 +314,11 @@ ros2 launch insta360_ros_driver pointcloud_pipeline.launch.py \
   cubemap:="$ENABLE_CUBEMAP" \
   cubemap_gui:="$CUBEMAP_GUI" \
   cubemap_face_size:="$CUBEMAP_FACE_SIZE" \
+  yolo26s_depth:="$ENABLE_YOLO_DEPTH" \
+  yolo_model_path:="$YOLO_MODEL_PATH" \
+  yolo_point_stride:="$YOLO_POINT_STRIDE" \
+  yolo_imgsz:="$YOLO_IMGSZ" \
+  yolo_depth_mode:="$YOLO_DEPTH_MODE" \
   calibration:="$CALIBRATION" \
   rviz:="$OPEN_RVIZ" &
 LAUNCH_PID=$!
@@ -269,6 +328,10 @@ if [[ "$ENABLE_CUBEMAP" == true ]]; then
   wait_for_message /cubemap/horizontal/image 20 "Cubemap horizontal mosaic"
 fi
 wait_for_message /da360/points 90 "DA360 point cloud"
+if [[ "$ENABLE_YOLO_DEPTH" == true ]]; then
+  wait_for_message /yolo26s_depth/left/points 90 "YOLO26s-depth left point cloud"
+  wait_for_message /yolo26s_depth/right/points 90 "YOLO26s-depth right point cloud"
+fi
 
 echo "[pointcloud-pipeline] pipeline is running; press Ctrl-C to stop everything"
 set +e

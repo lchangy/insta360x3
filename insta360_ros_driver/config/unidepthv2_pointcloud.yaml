@@ -1,0 +1,30 @@
+unidepthv2_pointcloud:
+  ros__parameters:
+    # UniDepthV2 small is the ViT-S/14 checkpoint from the official repository.
+    model_name: lpiccinelli/unidepth-v2-vits14
+    # Set this when UniDepth is a checkout rather than an installed package.
+    unidepth_repo: ""
+    front_image_topic: /cubemap/front/image
+    right_image_topic: /cubemap/right/image
+    back_image_topic: /cubemap/back/image
+    left_image_topic: /cubemap/left/image
+    front_depth_topic: /unidepthv2/front/depth
+    right_depth_topic: /unidepthv2/right/depth
+    back_depth_topic: /unidepthv2/back/depth
+    left_depth_topic: /unidepthv2/left/depth
+    front_pointcloud_topic: /unidepthv2/front/points
+    right_pointcloud_topic: /unidepthv2/right/points
+    back_pointcloud_topic: /unidepthv2/back/points
+    left_pointcloud_topic: /unidepthv2/left/points
+    frame_id: camera_frame
+    point_stride: 2
+    face_fov_deg: 90.0
+    range_min: 0.05
+    range_max: 100.0
+    # 0 disables confidence filtering; UniDepthV2 still publishes its map.
+    confidence_threshold: 0.0
+    publish_depth: true
+    device: ""
+    # -1 keeps the model default; 5 is a practical small-model starting point.
+    resolution_level: 5
+    interpolation_mode: bilinear

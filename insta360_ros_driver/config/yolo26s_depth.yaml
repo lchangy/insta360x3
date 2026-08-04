@@ -1,0 +1,24 @@
+yolo26s_depth_pointcloud:
+  ros__parameters:
+    # Ultralytics resolves the official filename from its model cache and
+    # downloads it when it is not present. An absolute .pt path is also valid.
+    model_path: yolo26s-depth.pt
+    left_image_topic: /cubemap/left/image
+    right_image_topic: /cubemap/right/image
+    left_depth_topic: /yolo26s_depth/left/depth
+    right_depth_topic: /yolo26s_depth/right/depth
+    left_pointcloud_topic: /yolo26s_depth/left/points
+    right_pointcloud_topic: /yolo26s_depth/right/points
+    frame_id: camera_frame
+    point_stride: 2
+    # Official YOLO26-depth checkpoints are trained/evaluated at 768.
+    imgsz: 768
+    device: ""
+    half: false
+    face_fov_deg: 90.0
+    # YOLO26-depth reports metric distance. optical_z is available when a
+    # checkpoint is interpreted as optical-axis Z instead of ray range.
+    depth_mode: range
+    depth_min: 0.05
+    depth_max: 100.0
+    publish_depth: true

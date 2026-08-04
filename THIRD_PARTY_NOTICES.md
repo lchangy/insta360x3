@@ -29,6 +29,14 @@ is stored at `insta360_ros_driver/third_party_licenses/DAP_LICENSE`. This licens
 restricts use to non-commercial purposes and requires attribution and change
 notices.
 
+## Ultralytics YOLO26 depth
+
+The YOLO26s-depth runtime is provided by the pinned upstream Ultralytics
+source revision in `pyproject.toml` / `uv.lock` and is licensed under AGPL-3.0.
+The `yolo26s-depth.pt` model weights are not distributed in this repository;
+Ultralytics resolves them separately at runtime. Review the upstream license
+and distribution terms before deploying the combined application.
+
 ## Insta360 CameraSDK
 
 `libCameraSDK.so` and the CameraSDK headers are proprietary SDK artifacts and

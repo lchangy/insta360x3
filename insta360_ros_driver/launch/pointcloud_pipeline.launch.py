@@ -1,4 +1,4 @@
-"""Insta360 X3 -> equirectangular image -> DA360 depth and point cloud."""
+"""Insta360 X3 -> cubemap -> DA360 and YOLO26s-depth point clouds."""
 
 from launch import LaunchDescription
 from launch.actions import (
@@ -50,6 +50,12 @@ def generate_launch_description():
     use_cubemap = LaunchConfiguration('cubemap')
     cubemap_gui = LaunchConfiguration('cubemap_gui')
     cubemap_face_size = LaunchConfiguration('cubemap_face_size')
+    use_yolo26s_depth = LaunchConfiguration('yolo26s_depth')
+    yolo26s_depth_config = LaunchConfiguration('yolo26s_depth_config')
+    yolo_model_path = LaunchConfiguration('yolo_model_path')
+    yolo_point_stride = LaunchConfiguration('yolo_point_stride')
+    yolo_imgsz = LaunchConfiguration('yolo_imgsz')
+    yolo_depth_mode = LaunchConfiguration('yolo_depth_mode')
     use_rviz = LaunchConfiguration('rviz')
     rviz_config = LaunchConfiguration('rviz_config')
 
@@ -152,6 +158,31 @@ def generate_launch_description():
         ],
     )
 
+    yolo26s_depth_script = PathJoinSubstitution([
+        package_share,
+        '..',
+        '..',
+        'lib',
+        PACKAGE_NAME,
+        'yolo26s_depth_pointcloud.py',
+    ])
+    yolo26s_depth = ExecuteProcess(
+        cmd=[
+            worker_python,
+            '-u',
+            yolo26s_depth_script,
+            '--ros-args',
+            '--params-file', yolo26s_depth_config,
+            '-p', ['model_path:=', yolo_model_path],
+            '-p', ['point_stride:=', yolo_point_stride],
+            '-p', ['imgsz:=', yolo_imgsz],
+            '-p', ['depth_mode:=', yolo_depth_mode],
+        ],
+        output='screen',
+        condition=IfCondition(use_yolo26s_depth),
+        additional_env={'PYTHONUNBUFFERED': '1'},
+    )
+
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -196,6 +227,19 @@ def generate_launch_description():
         DeclareLaunchArgument('cubemap', default_value='true'),
         DeclareLaunchArgument('cubemap_gui', default_value='true'),
         DeclareLaunchArgument('cubemap_face_size', default_value='360'),
+        DeclareLaunchArgument('yolo26s_depth', default_value='false'),
+        DeclareLaunchArgument(
+            'yolo26s_depth_config',
+            default_value=PathJoinSubstitution([
+                package_share,
+                'config',
+                'yolo26s_depth.yaml',
+            ]),
+        ),
+        DeclareLaunchArgument('yolo_model_path', default_value='yolo26s-depth.pt'),
+        DeclareLaunchArgument('yolo_point_stride', default_value='2'),
+        DeclareLaunchArgument('yolo_imgsz', default_value='768'),
+        DeclareLaunchArgument('yolo_depth_mode', default_value='range'),
         DeclareLaunchArgument('rviz', default_value='true'),
         DeclareLaunchArgument(
             'rviz_config',
@@ -210,6 +254,7 @@ def generate_launch_description():
         calibration_node,
         da360,
         cubemap,
+        yolo26s_depth,
     ]
     shutdown_handlers = [
         _shutdown_when_process_exits(camera_driver, 'Insta360 camera driver'),
@@ -218,6 +263,7 @@ def generate_launch_description():
         _shutdown_when_process_exits(calibration_node, 'equirectangular calibration'),
         _shutdown_when_process_exits(da360, 'DA360 depth worker'),
         _shutdown_when_process_exits(cubemap, 'Cubemap converter'),
+        _shutdown_when_process_exits(yolo26s_depth, 'YOLO26s-depth point-cloud worker'),
     ]
 
     return LaunchDescription(

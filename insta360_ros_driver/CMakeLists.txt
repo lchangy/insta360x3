@@ -105,6 +105,8 @@ install(PROGRAMS
   scripts/calibrate.py
   scripts/dual_fisheye_combiner.py
   scripts/ros_cubemap_view.py
+  scripts/yolo26s_depth_pointcloud.py
+  scripts/unidepthv2_pointcloud.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

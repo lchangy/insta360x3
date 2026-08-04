@@ -1,13 +1,15 @@
 # Insta360 X3 ROS 2 全景深度与点云
 
 本项目在 Ubuntu 22.04 / ROS 2 Humble 上把 Insta360 X3 实时视频处理为
-1440×720 全景图、Cubemap 四视角、DA360 small 相对深度和带 RGB 的点云，并用
-RViz 显示。相机、全景、Cubemap、深度模型和启动文件都由同一个仓库管理。
+1440×720 全景图、Cubemap 四视角、DA360 small 相对深度，以及可选的 YOLO26s-depth
+左/右视角米制深度点云，并用 RViz 叠加显示；UniDepthV2-Small 四面点云作为独立节点运行。
+相机、全景、Cubemap、深度模型和启动文件都由同一个仓库管理。
 
 ```text
 Insta360 X3 -> H.264 双鱼眼 -> 解码 -> 等距柱状全景
-                                      ├-> Cubemap
+                                      ├-> Cubemap -> 可选 YOLO26s-depth 左/右 -> PointCloud2
                                       └-> DA360 深度 -> PointCloud2 -> RViz
+                                      └-> 独立 UniDepthV2-Small 四面 -> PointCloud2 -> RViz
 ```
 
 主要功能：
@@ -15,13 +17,15 @@ Insta360 X3 -> H.264 双鱼眼 -> 解码 -> 等距柱状全景
 1. **相机采集**：通过 USB 连接 Insta360 X3，实时发布双鱼眼视频和 IMU 数据。
 2. **视频解码**：将相机输出的 H.264 视频解码为 ROS 2 图像话题。
 3. **全景转换**：把双鱼眼画面转换为 1440×720 等距柱状全景图。
-4. **深度估计**：使用 DA360 small 从全景图生成相对深度图。
-5. **点云生成**：将深度和全景颜色转换为带 RGB 的球面 `PointCloud2`。
-6. **Cubemap 输出**：生成 FRONT、RIGHT、BACK、LEFT 四个视角及组合预览图。
-7. **可视化**：自动启动 RViz 显示点云，也支持关闭 RViz 或窗口后台运行。
-8. **实时校准**：通过滑块调整中心、裁剪、平移和旋转，并直接保存校准参数。
-9. **统一管理**：一个脚本启动全部节点；核心节点退出时自动关闭整条流程。
-10. **环境锁定**：使用 `pyproject.toml` 和 `uv.lock` 固定 Python/CUDA 依赖版本。
+4. **全景深度估计**：使用 DA360 small 从全景图生成相对深度图。
+5. **Cubemap 深度估计**：可选使用 Ultralytics YOLO26s-depth 分别处理左、右 Cubemap 图像，生成米制深度。
+6. **点云生成**：将 DA360、左 Cubemap、右 Cubemap 深度转换为带 RGB 的 `PointCloud2`，并在 RViz 同时显示。
+7. **Cubemap 输出**：生成 FRONT、RIGHT、BACK、LEFT 四个视角及组合预览图。
+8. **可视化**：自动启动 RViz 显示四路点云，也支持关闭 RViz 或窗口后台运行。
+9. **实时校准**：通过滑块分别调整前后镜头中心、后镜头半径、裁剪、平移和旋转，并直接保存校准参数。
+10. **独立 UniDepth**：`start_unidepthv2_pointcloud.sh` 只启动 UniDepthV2-Small 四面点云和独立 RViz，不干扰原流程。
+11. **统一管理**：原流程脚本管理相机、DA360 和可选 YOLO；UniDepth 单独管理。
+12. **环境锁定**：使用 `pyproject.toml` 和 `uv.lock` 固定 Python/CUDA 依赖版本。
 
 数据流：
 
@@ -40,6 +44,9 @@ flowchart LR
     POINTS --> RVIZ[RViz]
     EQUIRECT --> CUBEMAP[Cubemap 转换]
     CUBEMAP --> FACES[前/右/后/左视角]
+    FACES --> YOLO[YOLO26s-depth 左/右]
+    YOLO --> YOLO_POINTS["/yolo26s_depth/{left,right}/points"]
+    YOLO_POINTS --> RVIZ
     CUBEMAP --> MOSAIC["/cubemap/horizontal/image"]
     IMU_RAW --> FILTER[Madgwick 滤波]
     FILTER --> IMU["/imu/data"]
@@ -47,8 +54,9 @@ flowchart LR
 
 ## 一、配置环境
 
-需要 Ubuntu 22.04、ROS 2 Humble、Python 3.10、Insta360 X3 CameraSDK 和支持
-PyTorch 的 NVIDIA GPU。CameraSDK 和模型权重需要分别从官方来源下载。
+需要 Ubuntu 22.04、ROS 2 Humble、Python 3.10、Insta360 X3 CameraSDK、支持
+PyTorch 的 NVIDIA GPU 和 Ultralytics。CameraSDK、DA360 和 YOLO26s-depth 权重
+需要分别从官方来源下载或由 Ultralytics 按模型名缓存。
 
 ```bash
 git clone https://github.com/lchangy/insta360x3.git
@@ -99,7 +107,9 @@ cba5dfeeb2199b4a7089a98ce08c7506c1e5ea12b22c3e4ad51cbdb15150dd74
 
 | 模式 | 命令 |
 | --- | --- |
-| 完整流程：相机、全景、Cubemap、DA360、IMU、RViz | `./start_pointcloud_pipeline.sh` |
+| 原流程：相机、全景、Cubemap、DA360、IMU、RViz（YOLO 默认关闭） | `./start_pointcloud_pipeline.sh` |
+| 原流程加 YOLO26s-depth | `./start_pointcloud_pipeline.sh --yolo-depth` |
+| 独立 UniDepthV2-Small 四面点云 | `./start_unidepthv2_pointcloud.sh` |
 | 实时校准，其他模块继续运行 | `./start_pointcloud_pipeline.sh --calibrate` |
 | 不启动 RViz | `./start_pointcloud_pipeline.sh --no-rviz` |
 | 发布 Cubemap 但不打开窗口 | `./start_pointcloud_pipeline.sh --cubemap-no-gui` |
@@ -114,7 +124,8 @@ cd /path/to/instax3
 ```
 
 该命令会打开校准滑块窗口，同时继续运行 Cubemap、DA360 点云和 RViz。拖动滑块
-调整中心、裁剪、平移和旋转参数；在校准图像窗口按 `s` 保存到
+调整中心、裁剪、平移和旋转参数。其中 `back_cx_offset`、`back_cy_offset` 和
+`back_radius_scale` 只影响后镜头；在校准图像窗口按 `s` 保存到
 `insta360_ros_driver/config/equirectangular.yaml`，按 `q` 或在启动终端按
 `Ctrl+C` 关闭整条流程。
 ![alt text](img_v3_02147_2ee6d122-b689-47af-9080-67e9f3985d9g.jpg)
@@ -128,8 +139,11 @@ cd /path/to/instax3
 
 ```bash
 ./start_pointcloud_pipeline.sh --cubemap-face-size 512
-./start_pointcloud_pipeline.sh --point-stride 2
+./start_pointcloud_pipeline.sh --da360-point-stride 2
 ./start_pointcloud_pipeline.sh --model-path /path/to/model.pth
+./start_pointcloud_pipeline.sh --yolo-depth
+./start_pointcloud_pipeline.sh --yolo-model-path /path/to/yolo26s-depth.pt
+./start_pointcloud_pipeline.sh --no-yolo-depth
 ./start_pointcloud_pipeline.sh --help
 ```
 
@@ -144,6 +158,12 @@ cd /path/to/instax3
 /cubemap/back/image
 /cubemap/left/image
 /cubemap/horizontal/image
+/yolo26s_depth/left/depth
+/yolo26s_depth/right/depth
+/yolo26s_depth/left/points
+/yolo26s_depth/right/points
+/unidepthv2/{front,right,back,left}/depth
+/unidepthv2/{front,right,back,left}/points
 /imu/data_raw
 /imu/data
 ```
