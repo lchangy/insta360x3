@@ -126,6 +126,9 @@ equirectangular_node:
   ros__parameters:
     cx_offset: 0.0
     cy_offset: 0.0
+    back_cx_offset: 0.0
+    back_cy_offset: 0.0
+    back_radius_scale: 1.0
     crop_size: 960
     translation: [0.0, 0.0, -0.105]
     rotation_deg: [-0.5, 0.0, 1.1]

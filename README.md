@@ -1,7 +1,7 @@
 # Insta360 X3 ROS 2 全景深度与点云
 
 本项目在 Ubuntu 22.04 / ROS 2 Humble 上把 Insta360 X3 实时视频处理为
-1440×720 全景图、Cubemap 四视角、DA360 small 相对深度，以及可选的 YOLO26s-depth
+实时管线默认输出 1036×518 全景图（可选恢复 1440×720）、按需 Cubemap 四视角、DA360 small 相对深度，以及可选的 YOLO26s-depth
 左/右视角米制深度点云，并用 RViz 叠加显示；UniDepthV2-Small 四面点云作为独立节点运行。
 相机、全景、Cubemap、深度模型和启动文件都由同一个仓库管理。
 
@@ -16,7 +16,7 @@ Insta360 X3 -> H.264 双鱼眼 -> 解码 -> 等距柱状全景
 
 1. **相机采集**：通过 USB 连接 Insta360 X3，实时发布双鱼眼视频和 IMU 数据。
 2. **视频解码**：将相机输出的 H.264 视频解码为 ROS 2 图像话题。
-3. **全景转换**：把双鱼眼画面转换为 1440×720 等距柱状全景图。
+3. **全景转换**：把双鱼眼画面转换为等距柱状全景图；实时点云管线默认使用 1036×518，以降低 ROS 图像带宽，必要时可用 `--equirect-size 1440x720` 恢复全分辨率。
 4. **全景深度估计**：使用 DA360 small 从全景图生成相对深度图。
 5. **Cubemap 深度估计**：可选使用 Ultralytics YOLO26s-depth 分别处理左、右 Cubemap 图像，生成米制深度。
 6. **点云生成**：将 DA360、左 Cubemap、右 Cubemap 深度转换为带 RGB 的 `PointCloud2`，并在 RViz 同时显示。
@@ -113,6 +113,7 @@ cba5dfeeb2199b4a7089a98ce08c7506c1e5ea12b22c3e4ad51cbdb15150dd74
 | 实时校准，其他模块继续运行 | `./start_pointcloud_pipeline.sh --calibrate` |
 | 不启动 RViz | `./start_pointcloud_pipeline.sh --no-rviz` |
 | 发布 Cubemap 但不打开窗口 | `./start_pointcloud_pipeline.sh --cubemap-no-gui` |
+| 最高性能模式并记录 Jetson 状态 | `./start_pointcloud_pipeline.sh --max-performance --no-rviz` |
 | 完全关闭 Cubemap | `./start_pointcloud_pipeline.sh --no-cubemap` |
 | 低界面负载校准 | `./start_pointcloud_pipeline.sh --calibrate --cubemap-no-gui --no-rviz` |
 
@@ -139,7 +140,9 @@ cd /path/to/instax3
 
 ```bash
 ./start_pointcloud_pipeline.sh --cubemap-face-size 512
+./start_pointcloud_pipeline.sh --cubemap-max-fps 15
 ./start_pointcloud_pipeline.sh --da360-point-stride 2
+DA360_PROFILE=1 DA360_CUDA_GRAPH=auto ./start_pointcloud_pipeline.sh --max-performance --no-rviz
 ./start_pointcloud_pipeline.sh --model-path /path/to/model.pth
 ./start_pointcloud_pipeline.sh --yolo-depth
 ./start_pointcloud_pipeline.sh --yolo-model-path /path/to/yolo26s-depth.pt
@@ -167,6 +170,10 @@ cd /path/to/instax3
 /imu/data_raw
 /imu/data
 ```
+
+所有点云的 frame_id 默认是 camera_frame，并统一采用 ROS 机体坐标约定：
+x 向前、y 向左、z 向上。因此在 RViz 中蓝色 z 轴对应现实世界的竖直方向，
+DA360、YOLO26s-depth 和 UniDepthV2 点云可以直接叠加。
 
 校准窗口中按 `s` 保存参数，按 `q` 退出。所有模式都可在启动终端按 `Ctrl+C`
 统一停止整条流程。

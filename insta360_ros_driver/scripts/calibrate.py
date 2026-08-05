@@ -28,6 +28,9 @@ class CalibrationNode(Node):
             parameters=[
                 ('cx_offset', 0.0),
                 ('cy_offset', 4.0),
+                ('back_cx_offset', 0.0),
+                ('back_cy_offset', 4.0),
+                ('back_radius_scale', 1.0),
                 ('crop_size', 1920),
                 ('mount_roll_deg', 90),
                 ('translation', [-0.034, -0.004, -0.226]),
@@ -102,6 +105,12 @@ class CalibrationNode(Node):
         try:
             self.cx_offset = self.get_parameter('cx_offset').get_parameter_value().double_value
             self.cy_offset = self.get_parameter('cy_offset').get_parameter_value().double_value
+            self.back_cx_offset = self.get_parameter('back_cx_offset').get_parameter_value().double_value
+            self.back_cy_offset = self.get_parameter('back_cy_offset').get_parameter_value().double_value
+            self.back_radius_scale = max(
+                0.01,
+                self.get_parameter('back_radius_scale').get_parameter_value().double_value,
+            )
             self.crop_size = self.get_parameter('crop_size').get_parameter_value().integer_value
             self.mount_roll_deg = self.get_parameter('mount_roll_deg').get_parameter_value().integer_value
             self.out_width = self.get_parameter('out_width').get_parameter_value().integer_value
@@ -123,7 +132,11 @@ class CalibrationNode(Node):
             self.get_logger().info(f"Loaded parameters from ROS parameter server")
             self.get_logger().info(f"  Crop size: {self.crop_size}")
             self.get_logger().info(f"  Mount roll: {self.mount_roll_deg} deg")
-            self.get_logger().info(f"  Center offset: ({self.cx_offset}, {self.cy_offset})")
+            self.get_logger().info(f"  Front center offset: ({self.cx_offset}, {self.cy_offset})")
+            self.get_logger().info(
+                f"  Back center offset: ({self.back_cx_offset}, {self.back_cy_offset})"
+            )
+            self.get_logger().info(f"  Back radius scale: {self.back_radius_scale:.4f}")
             self.get_logger().info(f"  Translation: [{self.tx}, {self.ty}, {self.tz}]")
             self.get_logger().info(f"  Rotation (deg): {rotation_deg}")
             self.get_logger().info(f"  Output size: {self.out_width}x{self.out_height}")
@@ -142,6 +155,9 @@ class CalibrationNode(Node):
                 "  ros__parameters:\n"
                 f"    cx_offset: {self.cx_offset}\n"
                 f"    cy_offset: {self.cy_offset}\n"
+                f"    back_cx_offset: {self.back_cx_offset}\n"
+                f"    back_cy_offset: {self.back_cy_offset}\n"
+                f"    back_radius_scale: {self.back_radius_scale}\n"
                 f"    crop_size: {self.crop_size}\n"
                 f"    mount_roll_deg: {self.mount_roll_deg}\n"
                 f"    translation: [{self.tx}, {self.ty}, {self.tz}]\n"
@@ -173,7 +189,8 @@ class CalibrationNode(Node):
         update_needed = False
         
         for param in params:
-            if param.name in ['cx_offset', 'cy_offset', 'crop_size', 'mount_roll_deg', 'translation', 'rotation_deg',
+            if param.name in ['cx_offset', 'cy_offset', 'back_cx_offset', 'back_cy_offset',
+                             'back_radius_scale', 'crop_size', 'mount_roll_deg', 'translation', 'rotation_deg',
                              'out_width', 'out_height', 'gpu']:
                 update_needed = True
                 
@@ -219,6 +236,8 @@ class CalibrationNode(Node):
         
         self.cx = img_width / 2 + self.cx_offset
         self.cy = img_height / 2 + self.cy_offset
+        self.back_cx = img_width / 2 + self.back_cx_offset
+        self.back_cy = img_height / 2 + self.back_cy_offset
         
         y, x = torch.meshgrid(
             torch.arange(self.out_height, dtype=torch.float32, device=self.device),
@@ -266,13 +285,15 @@ class CalibrationNode(Node):
         
         r_back = torch.sqrt(X_back**2 + Y_back**2).clamp_(min=1e-6)
         theta_back = torch.atan2(r_back, torch.abs(Z_back))
-        r_fisheye_back = 2 * theta_back / math.pi * (self.img_width / 2)
+        r_fisheye_back = (
+            2 * theta_back / math.pi * (self.img_width / 2) * self.back_radius_scale
+        )
         
         self.back_map_x = torch.zeros((self.out_height, self.out_width), dtype=torch.float32, device=self.device)
         self.back_map_y = torch.zeros((self.out_height, self.out_width), dtype=torch.float32, device=self.device)
 
-        self.back_map_x[self.back_mask] = self.cx + X_back / r_back * r_fisheye_back
-        self.back_map_y[self.back_mask] = self.cy + Y_back / r_back * r_fisheye_back
+        self.back_map_x[self.back_mask] = self.back_cx + X_back / r_back * r_fisheye_back
+        self.back_map_y[self.back_mask] = self.back_cy + Y_back / r_back * r_fisheye_back
 
         self.front_map_x_np = self.front_map_x.cpu().numpy()
         self.front_map_y_np = self.front_map_y.cpu().numpy()
@@ -540,6 +561,15 @@ class CalibrationNode(Node):
         # Create trackbars with initial values from ROS parameters
         cv2.createTrackbar("CX Offset [-100,100]", self.control_window, int(self.cx_offset) + 100, 200, self.update_cx)
         cv2.createTrackbar("CY Offset [-100,100]", self.control_window, int(self.cy_offset) + 100, 200, self.update_cy)
+        cv2.createTrackbar("Back CX [-100,100]", self.control_window, int(self.back_cx_offset) + 100, 200, self.update_back_cx)
+        cv2.createTrackbar("Back CY [-100,100]", self.control_window, int(self.back_cy_offset) + 100, 200, self.update_back_cy)
+        cv2.createTrackbar(
+            "Back Radius [0.80,1.20]",
+            self.control_window,
+            int(round((min(max(self.back_radius_scale, 0.8), 1.2) - 0.8) * 1000)),
+            400,
+            self.update_back_radius,
+        )
         cv2.createTrackbar("Crop Size", self.control_window, self.crop_size, 1920, self.update_crop)
         cv2.createTrackbar("TX [-0.5,0.5]", self.control_window, int(self.tx * 1000) + 500, 1000, self.update_tx)
         cv2.createTrackbar("TY [-0.5,0.5]", self.control_window, int(self.ty * 1000) + 500, 1000, self.update_ty)
@@ -555,6 +585,18 @@ class CalibrationNode(Node):
 
     def update_cy(self, value):
         self.cy_offset = float(value - 100)
+        self.trigger_calibration_update()
+
+    def update_back_cx(self, value):
+        self.back_cx_offset = float(value - 100)
+        self.trigger_calibration_update()
+
+    def update_back_cy(self, value):
+        self.back_cy_offset = float(value - 100)
+        self.trigger_calibration_update()
+
+    def update_back_radius(self, value):
+        self.back_radius_scale = 0.8 + value / 1000.0
         self.trigger_calibration_update()
         
     def update_crop(self, value):
@@ -617,7 +659,9 @@ class CalibrationNode(Node):
         equirect_bgr = self._cached_equirect.copy()
         
         info_text = (
-            f"cx: {self.crop_size/2 + self.cx_offset:.1f}, cy: {self.crop_size/2 + self.cy_offset:.1f} | "
+            f"front c: [{self.crop_size/2 + self.cx_offset:.1f}, {self.crop_size/2 + self.cy_offset:.1f}] | "
+            f"back c: [{self.crop_size/2 + self.back_cx_offset:.1f}, {self.crop_size/2 + self.back_cy_offset:.1f}] "
+            f"radius: {self.back_radius_scale:.3f} | "
             f"crop: {self.crop_size} | "
             f"t: [{self.tx:.3f}, {self.ty:.3f}, {self.tz:.3f}] | "
             f"r: [{math.degrees(self.roll):.1f}, {math.degrees(self.pitch):.1f}, {math.degrees(self.yaw):.1f}]"

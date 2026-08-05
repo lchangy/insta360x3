@@ -3,6 +3,7 @@
 from __future__ import absolute_import, division, print_function
 from collections import OrderedDict
 import os
+from contextlib import nullcontext
 
 import numpy as np
 import torch
@@ -11,17 +12,12 @@ import torch.nn as nn
 from depth_anything_v2.dpt import DepthAnythingV2
 from .layers import MultiLayerMLP, modify_conv_layers
 
-try:
-    autocast = torch.cuda.amp.autocast
-except:
-    # dummy autocast for PyTorch < 1.6
-    class autocast:
-        def __init__(self, enabled):
-            pass
-        def __enter__(self):
-            pass
-        def __exit__(self, *args):
-            pass
+def autocast(enabled):
+    if not enabled or not torch.cuda.is_available():
+        return nullcontext()
+    if hasattr(torch, 'amp') and hasattr(torch.amp, 'autocast'):
+        return torch.amp.autocast(device_type='cuda', dtype=torch.float16)
+    return torch.cuda.amp.autocast(enabled=True)
 
 
 class DA360(nn.Module):

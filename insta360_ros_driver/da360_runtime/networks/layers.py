@@ -13,10 +13,19 @@ class CirPad2d(nn.Module):
 
     def forward(self, x):
 
-        w = x.shape[-1]
+        # DA360 is exported/built at a fixed ERP resolution.  Converting the
+        # width to a Python integer keeps the circular half-turn padding
+        # constant in the ONNX graph.
+        w = int(x.shape[-1])
 
-        pad_u = torch.flip(torch.roll(x[:, : , :self.pad, :], w // 2, -1), dims=[-2])
-        pad_d = torch.flip(torch.roll(x[:, : , -self.pad:, :], w // 2, -1), dims=[-2])
+        pad_u = torch.flip(
+            torch.roll(x[:, :, :self.pad, :], shifts=(w // 2,), dims=(-1,)),
+            dims=[-2],
+        )
+        pad_d = torch.flip(
+            torch.roll(x[:, :, -self.pad:, :], shifts=(w // 2,), dims=(-1,)),
+            dims=[-2],
+        )
 
         x = torch.cat([pad_u, x, pad_d], dim=-2)
 
@@ -264,6 +273,7 @@ class ERPCircularConv2d(nn.Module):
             
         pad_h, pad_w = self._original_padding
         b, c, h, w = x.shape
+        w = int(w)
         
         # Create base tensor with zero padding
         y = F.pad(x, (pad_w, pad_w, pad_h, pad_h), mode='constant', value=0)
@@ -271,11 +281,17 @@ class ERPCircularConv2d(nn.Module):
         # Special vertical padding for ERP images
         if pad_h > 0:
             # Top padding: use bottom region, roll horizontally by half width and flip
-            top_fill = torch.flip(torch.roll(x[:, :, :pad_h, :], w // 2, -1), dims=[-2])
+            top_fill = torch.flip(
+                torch.roll(x[:, :, :pad_h, :], shifts=(w // 2,), dims=(-1,)),
+                dims=[-2],
+            )
             y[:, :, :pad_h, pad_w:pad_w+w] = top_fill
             
             # Bottom padding: use top region, roll horizontally by half width and flip  
-            bottom_fill = torch.flip(torch.roll(x[:, :, -pad_h:, :], w // 2, -1), dims=[-2])
+            bottom_fill = torch.flip(
+                torch.roll(x[:, :, -pad_h:, :], shifts=(w // 2,), dims=(-1,)),
+                dims=[-2],
+            )
             y[:, :, -pad_h:, pad_w:pad_w+w] = bottom_fill
         
         # Horizontal circular padding
@@ -323,4 +339,3 @@ def modify_conv_layers(module):
             if child.bias is not None:
                 custom_conv.bias.data = child.bias.data.clone()
             setattr(module, name, custom_conv)
-

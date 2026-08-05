@@ -14,6 +14,9 @@ EquirectangularNode::EquirectangularNode()
     // Declare parameters
     declare_parameter("cx_offset", 0.0);
     declare_parameter("cy_offset", 4.0);
+    declare_parameter("back_cx_offset", 0.0);
+    declare_parameter("back_cy_offset", 4.0);
+    declare_parameter("back_radius_scale", 1.0);
     declare_parameter("crop_size", 1920);
     declare_parameter("mount_roll_deg", 90);
     declare_parameter("translation", std::vector<double>{-0.034, -0.004, -0.226});
@@ -56,6 +59,13 @@ void EquirectangularNode::loadParameters()
     try {
         cx_offset_ = get_parameter("cx_offset").as_double();
         cy_offset_ = get_parameter("cy_offset").as_double();
+        back_cx_offset_ = get_parameter("back_cx_offset").as_double();
+        back_cy_offset_ = get_parameter("back_cy_offset").as_double();
+        back_radius_scale_ = get_parameter("back_radius_scale").as_double();
+        if (back_radius_scale_ <= 0.0) {
+            RCLCPP_WARN(get_logger(), "back_radius_scale must be positive; using 1.0");
+            back_radius_scale_ = 1.0;
+        }
         crop_size_ = get_parameter("crop_size").as_int();
         mount_roll_deg_ = get_parameter("mount_roll_deg").as_int();
         out_width_ = get_parameter("out_width").as_int();
@@ -74,7 +84,9 @@ void EquirectangularNode::loadParameters()
         RCLCPP_INFO(get_logger(), "Loaded parameters from ROS parameter server");
         RCLCPP_INFO(get_logger(), "  Crop size: %d", crop_size_);
         RCLCPP_INFO(get_logger(), "  Mount roll: %d deg", mount_roll_deg_);
-        RCLCPP_INFO(get_logger(), "  Center offset: (%.1f, %.1f)", cx_offset_, cy_offset_);
+        RCLCPP_INFO(get_logger(), "  Front center offset: (%.1f, %.1f)", cx_offset_, cy_offset_);
+        RCLCPP_INFO(get_logger(), "  Back center offset: (%.1f, %.1f)", back_cx_offset_, back_cy_offset_);
+        RCLCPP_INFO(get_logger(), "  Back radius scale: %.4f", back_radius_scale_);
         RCLCPP_INFO(get_logger(), "  Translation: [%.3f, %.3f, %.3f]", tx_, ty_, tz_);
         RCLCPP_INFO(get_logger(), "  Rotation (deg): [%.1f, %.1f, %.1f]", 
                     rotation_deg[0], rotation_deg[1], rotation_deg[2]);
@@ -124,6 +136,8 @@ void EquirectangularNode::initMapping(int img_height, int img_width)
     
     cx_ = img_width / 2.0 + cx_offset_;
     cy_ = img_height / 2.0 + cy_offset_;
+    back_cx_ = img_width / 2.0 + back_cx_offset_;
+    back_cy_ = img_height / 2.0 + back_cy_offset_;
     
     // Create output coordinate grids
     cv::Mat x_grid, y_grid;
@@ -221,10 +235,10 @@ void EquirectangularNode::initMapping(int img_height, int img_width)
                 if (r < 1e-6) r = 1e-6;
                 
                 float theta = atan2(r, fabs(Z_back));
-                float r_fisheye = 2 * theta / M_PI * (img_width / 2.0);
+                float r_fisheye = 2 * theta / M_PI * (img_width / 2.0) * back_radius_scale_;
                 
-                back_map_x_.at<float>(y, x) = cx_ + X_back / r * r_fisheye;
-                back_map_y_.at<float>(y, x) = cy_ + Y_back / r * r_fisheye;
+                back_map_x_.at<float>(y, x) = back_cx_ + X_back / r * r_fisheye;
+                back_map_y_.at<float>(y, x) = back_cy_ + Y_back / r * r_fisheye;
             }
         }
     }
@@ -357,6 +371,9 @@ rcl_interfaces::msg::SetParametersResult EquirectangularNode::parametersCallback
     for (const auto& param : parameters) {
         if (param.get_name() == "cx_offset" ||
             param.get_name() == "cy_offset" ||
+            param.get_name() == "back_cx_offset" ||
+            param.get_name() == "back_cy_offset" ||
+            param.get_name() == "back_radius_scale" ||
             param.get_name() == "crop_size" ||
             param.get_name() == "mount_roll_deg" ||
             param.get_name() == "translation" ||

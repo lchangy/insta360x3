@@ -22,10 +22,8 @@ FACE_POSES = {
     "right": "0.04 0 0 0 0 -1.57079632679",
     "back": "0.04 0 0 0 0 3.14159265359",
     "left": "0.04 0 0 0 0 1.57079632679",
-    # Gazebo's camera looks along +X, so negative pitch points toward +Y
-    # (the cubemap top face) and positive pitch points toward -Y.
-    "top": "0.04 0 0 0 -1.57079632679 0",
-    "bottom": "0.04 0 0 0 1.57079632679 0",
+    "top": "0.04 0 0 0 1.57079632679 0",
+    "bottom": "0.04 0 0 0 -1.57079632679 0",
 }
 
 

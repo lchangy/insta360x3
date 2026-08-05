@@ -35,8 +35,9 @@ export DA360_PYTHON=/path/to/venv/bin/python
 
 流程发布以下话题：
 
-- `/equirectangular/image`：1440×720 等距柱状全景图。
-- `/da360/depth`：`32FC1` 相对深度图。
+- `/equirectangular/image`：实时管线默认输出 1036×518 等距柱状全景图；该尺寸与 DA360 输入一致，Cubemap 仍输出 360×360 视角。需要原始全分辨率时可传 `--equirect-size 1440x720`。
+- `/da360/depth`：`32FC1` 相对深度图，默认 1 Hz、stride=2（宽×高约 518×259）；点云内部仍使用
+  完整模型深度，需要全分辨率时可设置 `DA360_DEPTH_STRIDE=1`。
 - `/da360/points`：带 RGB 的球面 `PointCloud2`。
 - `/cubemap/front/image`、`right`、`back`、`left`：四个 360×360 视角。
 - `/cubemap/horizontal/image`：`FRONT | RIGHT / BACK | LEFT` 拼图。
@@ -44,20 +45,53 @@ export DA360_PYTHON=/path/to/venv/bin/python
 - `/yolo26s_depth/left/points`、`/right/points`：左/右 Cubemap 的带 RGB `PointCloud2`，
   两者都已经投影到 `camera_frame`，可与 `/da360/points` 叠加。
 
-默认启动 RViz 和 DA360，使用内置 `DA360_small.pth`，DA360
-`point_stride=4`。YOLO 默认关闭，需要时显式加 `--yolo-depth`；可选参数：
+默认启动 RViz 和 DA360；如果存在 `DA360_small_int8.engine` 就优先使用它，否则回退到
+内置 `DA360_small.pth`。DA360
+`point_stride=4`。DA360 推理、点云生成和发布采用最新帧流水线；模型仍使用完整
+1036×518 输入，点云内容不因优化降采样。`/da360/depth` 默认限制为 1 Hz、stride=2，
+只影响可视化深度话题。Cubemap 默认 10 FPS 且不打开 GUI，只在有订阅者的面上执行重映射。
+YOLO 默认关闭，需要时显式加 `--yolo-depth`；可选参数：
 
 ```bash
 ./start_pointcloud_pipeline.sh --no-rviz
 ./start_pointcloud_pipeline.sh --cubemap-no-gui
 ./start_pointcloud_pipeline.sh --no-cubemap
+./start_pointcloud_pipeline.sh --cubemap-max-fps 15
+./start_pointcloud_pipeline.sh --equirect-size 1440x720
 ./start_pointcloud_pipeline.sh --cubemap-face-size 512
 ./start_pointcloud_pipeline.sh --da360-point-stride 2
+./start_pointcloud_pipeline.sh --max-performance --no-rviz
+DA360_PROFILE=1 DA360_CUDA_GRAPH=auto ./start_pointcloud_pipeline.sh --max-performance --no-rviz
 ./start_pointcloud_pipeline.sh --model-path /path/to/checkpoint.pth
 ./start_pointcloud_pipeline.sh --yolo-depth
 ./start_pointcloud_pipeline.sh --yolo-model-path /path/to/yolo26s-depth.pt
 ./start_pointcloud_pipeline.sh --yolo-point-stride 4
 ./start_pointcloud_pipeline.sh --no-yolo-depth
+```
+
+### 可选 TensorRT INT8 版本
+
+INT8 版本是独立的 TensorRT `.engine`，不会覆盖原来的 `.pth`。先从真实全景输入采集校准帧，
+再在 Jetson 上导出和构建：
+
+```bash
+source /opt/ros/humble/setup.bash
+source /path/to/instax3/install/setup.bash
+python /path/to/instax3/insta360_ros_driver/da360_runtime/ros2_da360/ros2_da360/collect_da360_calibration.py \
+  --topic /equirectangular/image --count 64 --output /tmp/da360_calibration.npy
+python /path/to/instax3/insta360_ros_driver/da360_runtime/ros2_da360/ros2_da360/quantize_da360_int8.py \
+  --repo-root /path/to/instax3/insta360_ros_driver/da360_runtime \
+  --checkpoint /path/to/instax3/insta360_ros_driver/da360_runtime/checkpoints/DA360_small.pth \
+  --calibration /tmp/da360_calibration.npy \
+  --output-dir /path/to/instax3/insta360_ros_driver/da360_runtime/checkpoints/DA360_small_int8
+```
+
+生成后可通过模型路径单独试跑；不带 `.engine` 的 `.pth` 仍走原来的 PyTorch FP16 + CUDA Graph：
+
+```bash
+./start_pointcloud_pipeline.sh \
+  --model-path /path/to/instax3/insta360_ros_driver/da360_runtime/checkpoints/DA360_small_int8/DA360_small_int8.engine \
+  --no-rviz --cubemap-no-gui
 ```
 
 DA360 的 `point_stride` 也可以直接传给 launch：`point_stride:=1` 输出最密，
@@ -85,3 +119,6 @@ YOLO 节点的完整参数在
 Ctrl-C 关闭整条流程。
 
 Ctrl-C 会统一关闭相机驱动、解码、全景转换、DA360/YOLO worker 和 RViz。
+
+点云消息的 frame_id 默认是 camera_frame，统一采用 ROS 机体坐标约定：x=前、y=左、z=上。
+因此在 RViz 中蓝色 z 轴为竖直方向，DA360、YOLO26s-depth 和 UniDepthV2 点云可以直接叠加。

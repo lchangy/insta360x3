@@ -14,6 +14,7 @@ from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -44,12 +45,15 @@ def generate_launch_description():
     depth_topic = LaunchConfiguration('depth_topic')
     pointcloud_topic = LaunchConfiguration('pointcloud_topic')
     equirectangular_config = LaunchConfiguration('equirectangular_config')
+    equirect_width = LaunchConfiguration('equirect_width')
+    equirect_height = LaunchConfiguration('equirect_height')
     imu_config = LaunchConfiguration('imu_config')
     use_imu_filter = LaunchConfiguration('imu_filter')
     calibration = LaunchConfiguration('calibration')
     use_cubemap = LaunchConfiguration('cubemap')
     cubemap_gui = LaunchConfiguration('cubemap_gui')
     cubemap_face_size = LaunchConfiguration('cubemap_face_size')
+    cubemap_max_fps = LaunchConfiguration('cubemap_max_fps')
     use_yolo26s_depth = LaunchConfiguration('yolo26s_depth')
     yolo26s_depth_config = LaunchConfiguration('yolo26s_depth_config')
     yolo_model_path = LaunchConfiguration('yolo_model_path')
@@ -85,7 +89,13 @@ def generate_launch_description():
         name='equirectangular_node',
         output='screen',
         condition=UnlessCondition(calibration),
-        parameters=[equirectangular_config],
+        parameters=[
+            equirectangular_config,
+            {
+                'out_width': ParameterValue(equirect_width, value_type=int),
+                'out_height': ParameterValue(equirect_height, value_type=int),
+            },
+        ],
     )
 
     calibration_script = PathJoinSubstitution([
@@ -155,6 +165,7 @@ def generate_launch_description():
             '--topic', input_topic,
             '--face-size', cubemap_face_size,
             '--gui', cubemap_gui,
+            '--max-fps', cubemap_max_fps,
         ],
     )
 
@@ -218,6 +229,8 @@ def generate_launch_description():
             'equirectangular_config',
             default_value=PathJoinSubstitution([package_share, 'config', 'equirectangular.yaml']),
         ),
+        DeclareLaunchArgument('equirect_width', default_value='1440'),
+        DeclareLaunchArgument('equirect_height', default_value='720'),
         DeclareLaunchArgument(
             'imu_config',
             default_value=PathJoinSubstitution([package_share, 'config', 'imu_filter.yaml']),
@@ -225,8 +238,9 @@ def generate_launch_description():
         DeclareLaunchArgument('imu_filter', default_value='true'),
         DeclareLaunchArgument('calibration', default_value='false'),
         DeclareLaunchArgument('cubemap', default_value='true'),
-        DeclareLaunchArgument('cubemap_gui', default_value='true'),
+        DeclareLaunchArgument('cubemap_gui', default_value='false'),
         DeclareLaunchArgument('cubemap_face_size', default_value='360'),
+        DeclareLaunchArgument('cubemap_max_fps', default_value='10'),
         DeclareLaunchArgument('yolo26s_depth', default_value='false'),
         DeclareLaunchArgument(
             'yolo26s_depth_config',

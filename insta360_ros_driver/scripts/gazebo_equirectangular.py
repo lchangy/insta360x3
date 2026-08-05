@@ -122,9 +122,7 @@ class GazeboEquirectangular(Node):
         self._faces[face] = (msg.header, image)
 
     @staticmethod
-    def _face_map(
-        direction: Tuple[np.ndarray, np.ndarray, np.ndarray], face: str, face_size: int
-    ):
+    def _face_map(direction: Tuple[np.ndarray, np.ndarray, np.ndarray], face: str):
         """Return cube-face coordinates using cubemap_projection.py conventions."""
         dx, dy, dz = direction
         if face == "front":
@@ -148,8 +146,8 @@ class GazeboEquirectangular(Node):
         else:
             raise ValueError(f"unknown face: {face}")
 
-        map_x = (a + 1.0) * 0.5 * np.float32(face_size) - 0.5
-        map_y = (b + 1.0) * 0.5 * np.float32(face_size) - 0.5
+        map_x = (a + 1.0) * 0.5 * np.float32(direction[0].shape[1]) - 0.5
+        map_y = (b + 1.0) * 0.5 * np.float32(direction[0].shape[0]) - 0.5
         return map_x.astype(np.float32), map_y.astype(np.float32)
 
     def _compose(self) -> Optional[np.ndarray]:
@@ -181,7 +179,7 @@ class GazeboEquirectangular(Node):
         erp = np.zeros((rows, cols, 3), dtype=np.uint8)
         for face in FACES:
             image = self._faces[face][1]
-            map_x, map_y = self._face_map(direction, face, self.face_size)
+            map_x, map_y = self._face_map(direction, face)
             sampled = cv2.remap(
                 image,
                 map_x,

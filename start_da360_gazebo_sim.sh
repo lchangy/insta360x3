@@ -76,11 +76,7 @@ done
 
 [[ "$FACE_SIZE" =~ ^[1-9][0-9]*$ ]] || die "face size must be a positive integer"
 [[ "$POINT_STRIDE" =~ ^[1-9][0-9]*$ ]] || die "point stride must be a positive integer"
-[[ "$PUBLISH_RATE" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "rate must be a positive number"
 [[ "$ROS_DOMAIN" =~ ^[0-9]+$ ]] || die "ROS domain id must be an integer"
-if [[ "$PUBLISH_RATE" != *.* ]]; then
-  PUBLISH_RATE="${PUBLISH_RATE}.0"
-fi
 [[ -r "$ROS_SETUP" ]] || die "ROS setup not found: $ROS_SETUP"
 [[ -r "$WORLD_FILE" ]] || die "SDF world not found: $WORLD_FILE"
 [[ -d "$MODEL_DIR" ]] || die "semantic_mapping model directory not found: $MODEL_DIR"

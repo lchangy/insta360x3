@@ -353,7 +353,9 @@ class UniDepthV2PointCloud(Node):
 
         points_local = np.transpose(points_np, (1, 2, 0))
         # UniDepth/Pinhole uses x-right, y-down, z-forward image coordinates.
-        # The cubemap node's shared camera frame is x-right, y-up, z-forward.
+        # First convert to the cubemap-local convention x-right, y-up,
+        # z-forward. The final conversion below publishes camera_frame in
+        # the ROS body-frame convention x-forward, y-left, z-up.
         # These transforms exactly match cubemap_projection.build_face_map():
         # front=(+x,-y,+z), right=(+z,-y,-x), back=(-x,-y,-z),
         # left=(-z,-y,+x).
@@ -396,8 +398,13 @@ class UniDepthV2PointCloud(Node):
         else:
             raise ValueError(f"unsupported cubemap side: {frame.side}")
 
+        points_ros = np.stack(
+            (points_camera[..., 2], -points_camera[..., 0], points_camera[..., 1]),
+            axis=-1,
+        )
+
         return (
-            np.ascontiguousarray(points_camera, dtype=np.float32),
+            np.ascontiguousarray(points_ros, dtype=np.float32),
             np.ascontiguousarray(depth_np, dtype=np.float32),
             None
             if confidence_np is None

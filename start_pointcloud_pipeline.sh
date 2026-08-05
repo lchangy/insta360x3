@@ -14,17 +14,23 @@ SYSTEM_PYTHON="/usr/bin/python3"
 
 MODEL_PATH=""
 YOLO_MODEL_PATH="yolo26s-depth.pt"
-POINT_STRIDE=4
+POINT_STRIDE=2
 YOLO_POINT_STRIDE=2
 YOLO_IMGSZ=768
 YOLO_DEPTH_MODE=range
 OPEN_RVIZ=true
 ENABLE_CUBEMAP=true
-CUBEMAP_GUI=true
+CUBEMAP_GUI=false
 CUBEMAP_FACE_SIZE=360
+CUBEMAP_MAX_FPS=8
+EQUIRECT_WIDTH=1036
+EQUIRECT_HEIGHT=518
 ENABLE_YOLO_DEPTH=false
 CALIBRATION=false
+MAX_PERFORMANCE=false
 LAUNCH_PID=""
+PERFORMANCE_MONITOR_PID=""
+PERFORMANCE_LOG="/tmp/instax3_tegrastats_$$.log"
 CLEANING_UP=0
 
 usage() {
@@ -32,14 +38,19 @@ usage() {
 Usage: ./start_pointcloud_pipeline.sh [options]
 
 Starts the complete Insta360 X3 -> panorama -> Cubemap -> DA360/YOLO point-cloud pipeline.
-The DA360 runtime is bundled; download DA360_small.pth as described in README.md.
+The DA360 runtime is bundled; when an INT8 TensorRT engine is present it is
+selected by default, otherwise DA360_small.pth is used.
 The official YOLO26 depth model is named yolo26s-depth.pt and is resolved by Ultralytics.
 
 Options:
   --no-rviz              Do not start RViz.
   --no-cubemap           Do not publish cubemap views.
+  --cubemap-gui          Open the Cubemap mosaic window.
   --cubemap-no-gui       Publish cubemap topics without opening its window.
   --cubemap-face-size N  Cubemap face width/height (default: 360).
+  --cubemap-max-fps N    Cubemap processing rate; 0 means unlimited (default: 10).
+  --equirect-size WxH    Equirectangular stream size (default: 1036x518).
+  --max-performance      Select Jetson MAXN and enable jetson_clocks.
   --yolo-depth           Enable YOLO26s-depth on left/right cubemap faces.
   --no-yolo-depth        Disable YOLO26s-depth.
   --yolo-model-path PATH YOLO26s-depth checkpoint or Ultralytics model name.
@@ -47,7 +58,7 @@ Options:
   --yolo-imgsz N       YOLO inference size (default: 768).
   --yolo-depth-mode M  YOLO depth interpretation: range or optical_z.
   --calibrate            Replace the C++ panorama node with the live calibration UI.
-  --model-path PATH      Override the bundled DA360_small.pth checkpoint.
+  --model-path PATH      Override the automatically selected DA360 model.
   --point-stride N       DA360 point-cloud sampling stride (default: 4).
   --da360-point-stride N Alias for --point-stride.
   -h, --help             Show this help.
@@ -55,6 +66,8 @@ Options:
 Environment:
   DA360_PYTHON           Python with rclpy, OpenCV, NumPy, and CUDA Torch.
                          Defaults to ./.venv/bin/python, then /usr/bin/python3.
+  DA360_PROFILE=1        Log inference, point-cloud, publish, and dropped-frame timings.
+  DA360_CUDA_GRAPH=auto  Try a static CUDA graph after the pipeline starts.
 EOF
 }
 
@@ -79,10 +92,34 @@ while [[ $# -gt 0 ]]; do
       CUBEMAP_GUI=false
       shift
       ;;
+    --cubemap-gui)
+      CUBEMAP_GUI=true
+      shift
+      ;;
     --cubemap-face-size)
       [[ $# -ge 2 ]] || die "--cubemap-face-size requires a positive integer"
       CUBEMAP_FACE_SIZE="$2"
       shift 2
+      ;;
+    --cubemap-max-fps)
+      [[ $# -ge 2 ]] || die "--cubemap-max-fps requires zero or a positive integer"
+      [[ "$2" =~ ^[0-9]+$ ]] || die "cubemap max fps must be zero or a positive integer"
+      CUBEMAP_MAX_FPS="$2"
+      shift 2
+      ;;
+    --equirect-size)
+      [[ $# -ge 2 ]] || die "--equirect-size requires WxH"
+      if [[ "$2" =~ ^([1-9][0-9]*)x([1-9][0-9]*)$ ]]; then
+        EQUIRECT_WIDTH="${BASH_REMATCH[1]}"
+        EQUIRECT_HEIGHT="${BASH_REMATCH[2]}"
+      else
+        die "equirectangular size must have the form WxH"
+      fi
+      shift 2
+      ;;
+    --max-performance)
+      MAX_PERFORMANCE=true
+      shift
       ;;
     --yolo-depth)
       ENABLE_YOLO_DEPTH=true
@@ -143,6 +180,7 @@ done
 [[ "$YOLO_DEPTH_MODE" == "range" || "$YOLO_DEPTH_MODE" == "optical_z" ]] \
   || die "YOLO depth mode must be range or optical_z"
 [[ "$CUBEMAP_FACE_SIZE" =~ ^[1-9][0-9]*$ ]] || die "cubemap face size must be a positive integer"
+[[ "$CUBEMAP_MAX_FPS" =~ ^[0-9]+$ ]] || die "cubemap max fps must be zero or a positive integer"
 [[ -r "$ROS_SETUP" ]] || die "ROS 2 Humble setup not found: $ROS_SETUP"
 [[ -r "$INSTALL_SETUP" ]] || die "workspace is not built; missing $INSTALL_SETUP"
 
@@ -168,10 +206,22 @@ if [[ -n "$MODEL_PATH" ]]; then
     MODEL_PATH="${WORKSPACE_DIR}/${MODEL_PATH}"
   fi
 else
-  MODEL_PATH="${RUNTIME_ROOT}/checkpoints/DA360_small.pth"
+  DEFAULT_INT8_MODEL="${RUNTIME_ROOT}/checkpoints/DA360_small_int8/DA360_small_int8.engine"
+  SOURCE_INT8_MODEL="${WORKSPACE_DIR}/insta360_ros_driver/da360_runtime/checkpoints/DA360_small_int8/DA360_small_int8.engine"
+  DEFAULT_FP16_MODEL="${RUNTIME_ROOT}/checkpoints/DA360_small.pth"
+  SOURCE_FP16_MODEL="${WORKSPACE_DIR}/insta360_ros_driver/da360_runtime/checkpoints/DA360_small.pth"
+  if [[ -r "$DEFAULT_INT8_MODEL" ]]; then
+    MODEL_PATH="$DEFAULT_INT8_MODEL"
+  elif [[ -r "$SOURCE_INT8_MODEL" ]]; then
+    MODEL_PATH="$SOURCE_INT8_MODEL"
+  elif [[ -r "$DEFAULT_FP16_MODEL" ]]; then
+    MODEL_PATH="$DEFAULT_FP16_MODEL"
+  else
+    MODEL_PATH="$SOURCE_FP16_MODEL"
+  fi
 fi
 [[ -r "$MODEL_PATH" ]] || die \
-  "DA360 checkpoint not found: $MODEL_PATH; download DA360_small.pth as described in README.md"
+  "DA360 model not found: $MODEL_PATH; generate the INT8 engine or download DA360_small.pth as described in README.md"
 
 if [[ -n "${DA360_PYTHON:-}" ]]; then
   WORKER_PYTHON="$DA360_PYTHON"
@@ -209,6 +259,41 @@ ensure_udev_access() {
   [[ -n "$usb_node" && -e "$usb_node" ]] || die "USB node /dev/insta was not created"
   [[ -r "$usb_node" && -w "$usb_node" ]] || die "USB node is not readable/writable: $usb_node"
   echo "[pointcloud-pipeline] USB: $usb_node ($(stat -c '%U:%G %A' "$usb_node"))"
+}
+
+configure_max_performance() {
+  [[ "$MAX_PERFORMANCE" == true ]] || return 0
+  command -v nvpmodel >/dev/null 2>&1 \
+    || die "--max-performance requested, but nvpmodel is not installed"
+  command -v jetson_clocks >/dev/null 2>&1 \
+    || die "--max-performance requested, but jetson_clocks is not installed"
+
+  local maxn_line=""
+  local maxn_id=""
+  if [[ -r /etc/nvpmodel.conf ]]; then
+    maxn_line="$(grep -m1 -E 'NAME[[:space:]]*=[[:space:]]*\"?MAXN\"?' /etc/nvpmodel.conf || true)"
+    if [[ -n "$maxn_line" ]]; then
+      maxn_id="$(printf '%s\n' "$maxn_line" | sed -nE 's/.*ID[[:space:]]*=[[:space:]]*\"?([0-9]+)\"?.*/\1/p')"
+    fi
+  fi
+  [[ -n "$maxn_id" ]] || die "could not find a MAXN power model in /etc/nvpmodel.conf"
+
+  sudo -n nvpmodel -m "$maxn_id" \
+    || die "MAXN switch needs passwordless sudo; run: sudo nvpmodel -m $maxn_id"
+  sudo -n jetson_clocks \
+    || die "jetson_clocks needs passwordless sudo; run: sudo jetson_clocks"
+  echo "[pointcloud-pipeline] Jetson performance: MAXN model $maxn_id + jetson_clocks"
+}
+
+start_performance_monitor() {
+  [[ "$MAX_PERFORMANCE" == true ]] || return 0
+  if command -v tegrastats >/dev/null 2>&1; then
+    tegrastats --interval 5000 >"$PERFORMANCE_LOG" 2>&1 &
+    PERFORMANCE_MONITOR_PID=$!
+    echo "[pointcloud-pipeline] tegrastats: $PERFORMANCE_LOG"
+  else
+    echo "[pointcloud-pipeline] warning: tegrastats is unavailable; temperature/throttle monitoring is disabled" >&2
+  fi
 }
 
 collect_pipeline_pids() {
@@ -266,7 +351,7 @@ wait_for_message() {
     if [[ -n "$LAUNCH_PID" ]] && ! kill -0 "$LAUNCH_PID" 2>/dev/null; then
       die "launch exited while waiting for $label"
     fi
-    if timeout 2s ros2 topic echo "$topic" --once --field header >/dev/null 2>&1; then
+    if timeout 2s ros2 topic echo "$topic" --no-daemon --qos-profile sensor_data --once --field header >/dev/null 2>&1; then
       echo "[pointcloud-pipeline] ready: $label ($topic)"
       return 0
     fi
@@ -283,6 +368,10 @@ cleanup() {
     kill -INT "$LAUNCH_PID" 2>/dev/null || true
     wait "$LAUNCH_PID" 2>/dev/null || true
   fi
+  if [[ -n "$PERFORMANCE_MONITOR_PID" ]] && kill -0 "$PERFORMANCE_MONITOR_PID" 2>/dev/null; then
+    kill "$PERFORMANCE_MONITOR_PID" 2>/dev/null || true
+    wait "$PERFORMANCE_MONITOR_PID" 2>/dev/null || true
+  fi
   stop_pipeline_processes
   exit "$status"
 }
@@ -298,11 +387,16 @@ trap on_signal INT TERM
 
 ensure_udev_access
 stop_pipeline_processes
+configure_max_performance
+start_performance_monitor
 
 echo "[pointcloud-pipeline] repository: $WORKSPACE_DIR"
 echo "[pointcloud-pipeline] bundled runtime: $RUNTIME_ROOT"
 echo "[pointcloud-pipeline] DA360 model: $MODEL_PATH"
 echo "[pointcloud-pipeline] DA360 point_stride=$POINT_STRIDE"
+echo "[pointcloud-pipeline] equirectangular size=${EQUIRECT_WIDTH}x${EQUIRECT_HEIGHT}"
+echo "[pointcloud-pipeline] cubemap max_fps=$CUBEMAP_MAX_FPS"
+echo "[pointcloud-pipeline] DA360 profile=${DA360_PROFILE:-0}; CUDA graph=${DA360_CUDA_GRAPH:-auto}"
 echo "[pointcloud-pipeline] YOLO26s-depth model: $YOLO_MODEL_PATH"
 echo "[pointcloud-pipeline] YOLO26s-depth imgsz=$YOLO_IMGSZ depth_mode=$YOLO_DEPTH_MODE"
 echo "[pointcloud-pipeline] launching camera, panorama, calibration=$CALIBRATION, cubemap=$ENABLE_CUBEMAP, DA360, YOLO26s-depth=$ENABLE_YOLO_DEPTH, RViz=$OPEN_RVIZ"
@@ -314,6 +408,9 @@ ros2 launch insta360_ros_driver pointcloud_pipeline.launch.py \
   cubemap:="$ENABLE_CUBEMAP" \
   cubemap_gui:="$CUBEMAP_GUI" \
   cubemap_face_size:="$CUBEMAP_FACE_SIZE" \
+  cubemap_max_fps:="$CUBEMAP_MAX_FPS" \
+  equirect_width:="$EQUIRECT_WIDTH" \
+  equirect_height:="$EQUIRECT_HEIGHT" \
   yolo26s_depth:="$ENABLE_YOLO_DEPTH" \
   yolo_model_path:="$YOLO_MODEL_PATH" \
   yolo_point_stride:="$YOLO_POINT_STRIDE" \
@@ -325,7 +422,7 @@ LAUNCH_PID=$!
 
 wait_for_message /equirectangular/image 20 "equirectangular panorama"
 if [[ "$ENABLE_CUBEMAP" == true ]]; then
-  wait_for_message /cubemap/horizontal/image 20 "Cubemap horizontal mosaic"
+  wait_for_message /cubemap/front/image 20 "Cubemap front face"
 fi
 wait_for_message /da360/points 90 "DA360 point cloud"
 if [[ "$ENABLE_YOLO_DEPTH" == true ]]; then

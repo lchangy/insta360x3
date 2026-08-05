@@ -4,7 +4,7 @@
 The cubemap node produces 90-degree rectilinear images.  YOLO26s-depth
 returns a dense metric depth map for each image; this node projects that map
 through the corresponding cube-face rays and publishes both clouds in the
-shared ``camera_frame`` coordinate system.
+shared camera_frame coordinate system (x=forward, y=left, z=up).
 """
 
 from __future__ import annotations
@@ -31,8 +31,10 @@ from std_msgs.msg import Header
 
 FACE_NAMES = ("left", "right")
 FACE_AXES = {
-    "left": np.array((-1.0, 0.0, 0.0), dtype=np.float32),
-    "right": np.array((1.0, 0.0, 0.0), dtype=np.float32),
+    # Optical-axis directions after converting from the cubemap convention
+    # (x=right, y=up, z=forward) to camera_frame (x=forward, y=left, z=up).
+    "left": np.array((0.0, 1.0, 0.0), dtype=np.float32),
+    "right": np.array((0.0, -1.0, 0.0), dtype=np.float32),
 }
 
 
@@ -297,11 +299,17 @@ class Yolo26sDepthPointCloud(Node):
         u, v = np.meshgrid(u, v)
 
         if side == "left":
-            rays = np.stack((-np.ones_like(u), -v, u), axis=-1)
+            cubemap_rays = np.stack((-np.ones_like(u), -v, u), axis=-1)
         elif side == "right":
-            rays = np.stack((np.ones_like(u), -v, -u), axis=-1)
+            cubemap_rays = np.stack((np.ones_like(u), -v, -u), axis=-1)
         else:
             raise ValueError(f"unsupported cubemap side: {side}")
+        # Cubemap rays are x=right, y=up, z=forward. Convert to the ROS
+        # body-frame convention x=forward, y=left, z=up.
+        rays = np.stack(
+            (cubemap_rays[..., 2], -cubemap_rays[..., 0], cubemap_rays[..., 1]),
+            axis=-1,
+        )
         rays /= np.linalg.norm(rays, axis=-1, keepdims=True)
         return rays.astype(np.float32, copy=False)
 

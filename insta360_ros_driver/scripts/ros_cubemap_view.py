@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 
 import cv2
 import numpy as np
@@ -21,11 +22,17 @@ FACE_NAMES = ('front', 'right', 'back', 'left')
 
 
 class RosCubemapView(Node):
-    def __init__(self, topic: str, face_size: int, show: bool) -> None:
+    def __init__(self, topic: str, face_size: int, show: bool, max_fps: int) -> None:
         super().__init__('insta360_ros_cubemap_view')
+        # Four small remaps are faster and more predictable with one worker;
+        # this also leaves CPU headroom for DA360 post-processing.
+        cv2.setNumThreads(1)
         self.bridge = CvBridge()
         self.face_size = face_size
         self.show = show
+        self.max_fps = max(0, int(max_fps))
+        self._min_interval = 1.0 / self.max_fps if self.max_fps else 0.0
+        self._last_process_time = 0.0
         self.maps = {
             name: build_face_map(face_size, name) for name in FACE_NAMES
         }
@@ -48,10 +55,29 @@ class RosCubemapView(Node):
         )
         self.get_logger().info(
             f'Listening on {topic}; publishing four {face_size}x{face_size} '
-            f'cubemap faces; gui={show}'
+            f'cubemap faces; gui={show}; max_fps={self.max_fps or "unlimited"}'
         )
 
     def image_callback(self, message: Image) -> None:
+        face_subscribers = {
+            name: publisher.get_subscription_count() > 0
+            for name, publisher in self.face_publishers.items()
+        }
+        mosaic_subscribers = self.mosaic_publisher.get_subscription_count() > 0
+        need_mosaic = self.show or mosaic_subscribers
+        needed_faces = {
+            name for name, subscribed in face_subscribers.items() if subscribed
+        }
+        if need_mosaic:
+            needed_faces.update(FACE_NAMES)
+        if not needed_faces:
+            return
+
+        now = time.monotonic()
+        if self._min_interval and now - self._last_process_time < self._min_interval:
+            return
+        self._last_process_time = now
+
         try:
             erp_bgr = self.bridge.imgmsg_to_cv2(message, desired_encoding='bgr8')
         except CvBridgeError as exc:
@@ -60,6 +86,8 @@ class RosCubemapView(Node):
 
         faces: dict[str, np.ndarray] = {}
         for name in FACE_NAMES:
+            if name not in needed_faces:
+                continue
             map_x, map_y = self.maps[name]
             face = remap_face(
                 erp_bgr,
@@ -70,36 +98,39 @@ class RosCubemapView(Node):
             )
             faces[name] = face
 
-            output = self.bridge.cv2_to_imgmsg(face, encoding='bgr8')
-            output.header = message.header
-            output.header.frame_id = f'cubemap_{name}'
-            self.face_publishers[name].publish(output)
+            if face_subscribers[name]:
+                output = self.bridge.cv2_to_imgmsg(face, encoding='bgr8')
+                output.header = message.header
+                output.header.frame_id = f'cubemap_{name}'
+                self.face_publishers[name].publish(output)
 
-        mosaic = np.vstack((
-            np.hstack((faces['front'], faces['right'])),
-            np.hstack((faces['back'], faces['left'])),
-        ))
-        for label, x, y in (
-            ('FRONT', 8, 24),
-            ('RIGHT', self.face_size + 8, 24),
-            ('BACK', 8, self.face_size + 24),
-            ('LEFT', self.face_size + 8, self.face_size + 24),
-        ):
-            cv2.putText(
-                mosaic,
-                label,
-                (x, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (0, 255, 0),
-                2,
-                cv2.LINE_AA,
-            )
+        if need_mosaic:
+            mosaic = np.vstack((
+                np.hstack((faces['front'], faces['right'])),
+                np.hstack((faces['back'], faces['left'])),
+            ))
+            for label, x, y in (
+                ('FRONT', 8, 24),
+                ('RIGHT', self.face_size + 8, 24),
+                ('BACK', 8, self.face_size + 24),
+                ('LEFT', self.face_size + 8, self.face_size + 24),
+            ):
+                cv2.putText(
+                    mosaic,
+                    label,
+                    (x, y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
 
-        mosaic_message = self.bridge.cv2_to_imgmsg(mosaic, encoding='bgr8')
-        mosaic_message.header = message.header
-        mosaic_message.header.frame_id = 'cubemap_horizontal'
-        self.mosaic_publisher.publish(mosaic_message)
+            if mosaic_subscribers:
+                mosaic_message = self.bridge.cv2_to_imgmsg(mosaic, encoding='bgr8')
+                mosaic_message.header = message.header
+                mosaic_message.header.frame_id = 'cubemap_horizontal'
+                self.mosaic_publisher.publish(mosaic_message)
 
         if self.show:
             cv2.imshow('Cubemap: front | right / back | left', mosaic)
@@ -115,15 +146,18 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--topic', default='/equirectangular/image')
     parser.add_argument('--face-size', type=int, default=360)
+    parser.add_argument('--max-fps', type=int, default=15)
     parser.add_argument('--gui', choices=('true', 'false'), default='true')
     parser.add_argument('--no-gui', action='store_true')
     args = parser.parse_args(remove_ros_args()[1:])
     if args.face_size <= 0:
         parser.error('--face-size must be a positive integer')
+    if args.max_fps < 0:
+        parser.error('--max-fps must be zero or a positive integer')
 
     show = args.gui == 'true' and not args.no_gui
     rclpy.init()
-    node = RosCubemapView(args.topic, args.face_size, show)
+    node = RosCubemapView(args.topic, args.face_size, show, args.max_fps)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
