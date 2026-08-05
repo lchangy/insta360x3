@@ -24,6 +24,31 @@ Insta360 X3 -> H.264 双鱼眼 -> 解码 -> 等距柱状全景
 8. **可视化**：自动启动 RViz 显示四路点云，也支持关闭 RViz 或窗口后台运行。
 9. **实时校准**：通过滑块分别调整前后镜头中心、后镜头半径、裁剪、平移和旋转，并直接保存校准参数。
 10. **独立 UniDepth**：`start_unidepthv2_pointcloud.sh` 只启动 UniDepthV2-Small 四面点云和独立 RViz，不干扰原流程。
+
+### 鱼眼投影校正与去畸变
+
+双鱼眼输入在全景节点中通过反向重映射转换为等距柱状全景图。该过程使用鱼眼
+投影模型完成径向投影校正、前后镜头拼接和安装姿态修正，可视为当前管线的
+“去畸变”路径。
+
+当前支持的校准参数位于
+`insta360_ros_driver/config/equirectangular.yaml`：
+
+- `cx_offset`、`cy_offset`：前镜头光心偏移。
+- `back_cx_offset`、`back_cy_offset`、`back_radius_scale`：后镜头光心和半径修正。
+- `translation`、`rotation_deg`：前后镜头相对位姿修正。
+- `crop_size`、`mount_roll_deg`：输入裁剪和相机安装滚转修正。
+
+可使用下面的命令打开实时校准界面，拖动滑块观察拼接效果并按 `s` 保存：
+
+```bash
+./start_pointcloud_pipeline.sh --calibrate
+```
+
+注意：当前实现采用鱼眼投影的理想模型，没有单独的 OpenCV `k1~k4`、`p1~p2`
+镜头畸变系数标定接口。如果需要工业级镜头标定精度，还需要增加标定板采集、
+畸变系数估计和基于这些系数的重映射流程。
+
 11. **统一管理**：原流程脚本管理相机、DA360 和可选 YOLO；UniDepth 单独管理。
 12. **环境锁定**：使用 `pyproject.toml` 和 `uv.lock` 固定 Python/CUDA 依赖版本。
 

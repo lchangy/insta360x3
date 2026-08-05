@@ -102,6 +102,26 @@ YOLO 节点的完整参数在
 “相机到表面的米制距离”解释深度。若使用的是光轴 Z 深度，可改为
 `depth_mode=optical_z`。
 
+## 鱼眼投影校正与去畸变
+
+双鱼眼到等距柱状全景的反向 remap 同时承担鱼眼投影校正、前后镜头拼接和安装姿态修正，
+这是当前管线中的去畸变路径。相关参数在
+`insta360_ros_driver/config/equirectangular.yaml`：
+
+- `cx_offset`、`cy_offset`：前镜头光心偏移。
+- `back_cx_offset`、`back_cy_offset`、`back_radius_scale`：后镜头光心和半径修正。
+- `translation`、`rotation_deg`：前后镜头相对位姿修正。
+- `crop_size`、`mount_roll_deg`：输入裁剪和安装滚转修正。
+
+实时调整并保存参数：
+
+```bash
+./start_pointcloud_pipeline.sh --calibrate
+```
+
+当前实现使用理想鱼眼投影模型，不提供独立的 OpenCV `k1~k4`、`p1~p2` 畸变系数标定接口。
+若需要更高精度的镜头标定，需要增加标定板采集、畸变系数估计和基于系数的重映射流程。
+
 ## 实时校准
 
 校准模式会用带滑块界面的 Python 全景节点替换 C++ 全景节点，Cubemap、深度和
